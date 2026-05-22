@@ -1,16 +1,20 @@
-name: 'File Downloader & Splitter'
+name: دانلودر هوشمند فایل (نسخه کامل)
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'لینک مستقیم فایل'
+        description: 'لینک مستقیم فایل (حتماً لینک مستقیم باشه)'
         required: true
         type: string
       split_size:
-        description: 'حداکثر حجم هر قسمت (MB)'
+        description: 'حداکثر حجم هر قسمت (بر حسب مگابایت)'
         required: true
         default: '90'
+        type: string
+      file_password:
+        description: 'رمز فایل (در صورت نیاز)'
+        required: false
         type: string
 
 jobs:
@@ -18,34 +22,124 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
       - name: دریافت کدهای مخزن
         uses: actions/checkout@v4
 
-      - name: پاکسازی فایل‌های قبلی (اختیاری)
+      - name: نصب ابزارهای مورد نیاز (unzip و rar)
         run: |
-          rm -rf downloads
-          mkdir -p downloads
+          sudo apt-get update
+          sudo apt-get install -y unzip
+          sudo wget https://www.rarlab.com/rar/rarlinux-x64-612.tar.gz
+          sudo tar -xzvf rarlinux-x64-612.tar.gz -C /usr/local/bin/
+          sudo ln -sf /usr/local/bin/rar/unrar /usr/local/bin/unrar
 
-      - name: دانلود فایل
+      - name: ساخت پوشه اختصاصی برای این فایل
+        run: |
+          rm -rf downloads_temp
+          mkdir -p downloads_temp
+
+      - name: دانلود فایل اصلی
         run: |
           echo "در حال دانلود از: ${{ github.event.inputs.url }}"
-          curl -L --retry 3 --retry-delay 2 -o "downloads/temp_file" "${{ github.event.inputs.url }}"
+          curl -L --retry 3 --retry-delay 2 -o "downloads_temp/original_file" "${{ github.event.inputs.url }}"
 
-      - name: تقسیم فایل به قطعات
+      - name: تشخیص نام و پسوند فایل اصلی
+        id: get_filenames
         run: |
-          cd downloads
+          cd downloads_temp
+          
+          # 1. گرفتن نام و پسوند فایل اصلی از سرور
+          FILE_NAME=$(basename "${{ github.event.inputs.url }}")
+          ORIGINAL_NAME="${FILE_NAME%.*}"
+          EXTENSION="${FILE_NAME##*.}"
+          echo "original_name=$ORIGINAL_NAME" >> $GITHUB_OUTPUT
+          echo "extension=$EXTENSION" >> $GITHUB_OUTPUT
+
+          # 2. اگر فایل ZIP یا RAR بود، از حالت فشرده خارجش کن
+          mkdir extracted
+          if [[ "$EXTENSION" == "zip" ]]; then
+            unzip -P "${{ github.event.inputs.file_password }}" original_file -d extracted/ && FINAL_FILE="extracted/$ORIGINAL_NAME" && FINAL_EXT=""
+            IS_ARCHIVE=true
+          elif [[ "$EXTENSION" == "rar" ]]; then
+            unrar x -p"${{ github.event.inputs.file_password }}" original_file extracted/
+            # پیدا کردن فایل اصلی بعد از اکسترکت
+            EXTRACTED_FILE=$(find extracted -type f ! -name "*.url" ! -name "*.txt" | head -n 1)
+            FINAL_FILE="$EXTRACTED_FILE"
+            FINAL_EXT=""
+            IS_ARCHIVE=true
+          else
+            FINAL_FILE="original_file"
+            FINAL_EXT="$EXTENSION"
+            IS_ARCHIVE=false
+          fi
+
+          # 3. اسم نهایی برای پوشه و فایل‌ها
+          if [ "$IS_ARCHIVE" = true ]; then
+            CLEAN_NAME="$ORIGINAL_NAME"
+          else
+            CLEAN_NAME="$FILE_NAME"
+          fi
+          
+          echo "clean_name=$CLEAN_NAME" >> $GITHUB_OUTPUT
+          echo "final_file=$FINAL_FILE" >> $GITHUB_OUTPUT
+          echo "final_ext=$FINAL_EXT" >> $GITHUB_OUTPUT
+        env:
+          # اجازه استفاده از رمز در داکر رانر
+          DOCKER_RUNNER: ubuntu-latest
+
+      - name: تقسیم فایل اصلی به قطعات
+        id: split
+        run: |
+          cd downloads_temp
           SPLIT_SIZE_MB=${{ github.event.inputs.split_size }}
           SPLIT_SIZE_KB=$((SPLIT_SIZE_MB * 1024))
-          split -b ${SPLIT_SIZE_KB}k temp_file "part_"
-          rm temp_file
-          ls -la
+          CLEAN_NAME="${{ steps.get_filenames.outputs.clean_name }}"
 
-      - name: بازگشت به شاخه اصلی و commit فایل‌ها
+          mkdir -p split_parts
+          # استفاده از فایلی که قراره تقسیم بشه
+          if [ -n "${{ steps.get_filenames.outputs.final_file }}" ]; then
+            FILE_TO_SPLIT="${{ steps.get_filenames.outputs.final_file }}"
+          else
+            FILE_TO_SPLIT="${{ steps.get_filenames.outputs.clean_name }}"
+          fi
+          
+          # اگر فایل اصلی حاصل از اکسترکت بو, پسوند نداره
+          split -b ${SPLIT_SIZE_KB}k --numeric-suffixes=1 --suffix-length=2 "$FILE_TO_SPLIT" "split_parts/${CLEAN_NAME}_part_"
+          
+          # تغییر اسم قسمت‌ها با پسوند زیپ
+          cd split_parts
+          PARTS_COUNT=$(ls -1 | wc -l)
+          echo "parts_count=$PARTS_COUNT" >> $GITHUB_OUTPUT
+          
+          for file in *; do
+            mv "$file" "${file}.zip"
+          done
+
+      - name: آماده‌سازی نهایی و ساخت CSV لینک‌ها
+        run: |
+          CLEAN_NAME="${{ steps.get_filenames.outputs.clean_name }}"
+          PARTS_COUNT=${{ steps.split.outputs.parts_count }}
+          
+          # پوشه اصلی خروجی رو بساز
+          mkdir -p "downloads/$CLEAN_NAME"
+          
+          # فایل‌های تیکه تیکه شده رو به پوشه نهایی منتقل کن
+          cp downloads_temp/split_parts/* "downloads/$CLEAN_NAME/"
+          
+          # فایل CSV شامل لینک دانلود هر قسمت رو بساز (برای دانلود از گیت‌هاب)
+          cd "downloads/$CLEAN_NAME"
+          echo "نام قسمت,حجم (حداکثر ${{ github.event.inputs.split_size }} مگابایت),لینک دانلود مستقیم" > links.csv
+          
+          for i in $(seq -f "%02g" 1 $PARTS_COUNT); do
+            echo "قسمت $i از $PARTS_COUNT, ${{ github.event.inputs.split_size }} MB, https://github.com/${{ github.repository }}/raw/main/downloads/$CLEAN_NAME/${CLEAN_NAME}_part_${i}.zip" >> links.csv
+          done
+
+      - name: Commit و Push نهایی به مخزن
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "actions@github.com"
           git add downloads/ -f
-          git commit -m "Add split file parts [skip ci]" || echo "No changes to commit"
+          git commit -m "فایل ${{ steps.get_filenames.outputs.clean_name }} دانلود و به ${{ steps.split.outputs.parts_count }} قسمت تقسیم شد"
           git push
