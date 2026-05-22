@@ -49,7 +49,6 @@ jobs:
           SPLIT_SIZE="${{ github.event.inputs.split_size }}"
           PASSWORD="${{ github.event.inputs.password }}"
           
-          # لیست کلمات تصادفی برای نام پوشه‌ها
           WORDS=("alpha" "beta" "gamma" "delta" "epsilon" "zeta" "eta" "theta" "iota" "kappa" "lambda" "mu" "nu" "xi" "omicron" "pi" "rho" "sigma" "tau" "upsilon" "phi" "chi" "psi" "omega")
           
           get_unique_folder() {
@@ -65,7 +64,6 @@ jobs:
           
           mkdir -p downloads_temp downloads
           
-          # دانلود همه فایل‌ها
           for URL in ${{ github.event.inputs.urls }}; do
             FILENAME=$(basename "$URL" | sed 's/[?#].*//' | sed 's/[^a-zA-Z0-9._-]/_/g')
             echo "📥 دانلود: $URL"
@@ -79,7 +77,6 @@ jobs:
             fi
           done
           
-          # حالت ZIP: همه فایل‌ها توی یه بسته
           if [ "$MODE" = "zip" ]; then
             if [ -n "$(ls -A downloads_temp 2>/dev/null)" ]; then
               ARCHIVE_NAME="archive_$(date +%Y%m%d_%H%M%S)"
@@ -92,7 +89,6 @@ jobs:
                 zip -j -s ${SPLIT_SIZE}m "downloads/$FOLDER_NAME/${ARCHIVE_NAME}.zip" downloads_temp/*
               fi
               
-              # ساخت لینک CSV
               cd "downloads/$FOLDER_NAME"
               echo "نام قطعه,لینک دانلود مستقیم" > links.csv
               ls -1 | grep -E "\.(zip|z[0-9]+)$" | while read PART; do
@@ -101,7 +97,6 @@ jobs:
               cd ../..
             fi
           else
-            # حالت normal: هر فایل جداگانه
             for FILE in downloads_temp/*; do
               [ -f "$FILE" ] || continue
               [ -s "$FILE" ] || continue
@@ -126,7 +121,6 @@ jobs:
                 fi
               fi
               
-              # ساخت لینک CSV برای قطعات
               cd "downloads/$FOLDER_NAME"
               echo "نام قطعه,لینک دانلود مستقیم" > links.csv
               ls -1 | grep -E "\.(zip|z[0-9]+)$" | while read PART; do
@@ -138,25 +132,37 @@ jobs:
           
           rm -rf downloads_temp
           
-          # ساخت فایل README راهنما
-          cat > downloads/README.md << 'EOF'
-# 📥 فایل‌های دانلود شده
-
-## نحوه دانلود قطعات
-1. وارد پوشه هر فایل شوید
-2. فایل `links.csv` را باز کنید
-3. روی لینک هر قطعه کلیک کنید
-
-## نحوه چسباندن قطعات (روی همون دستگاه گیت‌هاب)
-فایل‌های `.z01`, `.z02`, `.zip` توسط نرم‌افزارهای معمولی قابل باز شدن هستند.
-
-### در ویندوز:
-- روی فایل `.zip` کلیک راست کنید
-- گزینه **Extract Here** را انتخاب کنید
-
-### در اندروید:
-- با **ZArchiver** یا **RAR** مستقیماً فایل `.zip` را باز کنید
-
-### در لینوکس/مک:
-```bash
-unzip file.zip
+          echo "# فایل‌های دانلود شده" > downloads/README.md
+          echo "" >> downloads/README.md
+          echo "## نحوه دانلود قطعات" >> downloads/README.md
+          echo "1. وارد پوشه هر فایل شوید" >> downloads/README.md
+          echo "2. فایل \`links.csv\` را باز کنید" >> downloads/README.md
+          echo "3. روی لینک هر قطعه کلیک کنید" >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "## نحوه چسباندن قطعات" >> downloads/README.md
+          echo "فایل‌های \`.z01\`, \`.z02\`, \`.zip\` توسط نرم‌افزارهای معمولی قابل باز شدن هستند." >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "### در ویندوز:" >> downloads/README.md
+          echo "- روی فایل \`.zip\` کلیک راست کنید" >> downloads/README.md
+          echo "- گزینه **Extract Here** را انتخاب کنید" >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "### در اندروید:" >> downloads/README.md
+          echo "- با **ZArchiver** یا **RAR** مستقیماً فایل \`.zip\` را باز کنید" >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "### در لینوکس/مک:" >> downloads/README.md
+          echo "\`\`\`bash" >> downloads/README.md
+          echo "unzip file.zip" >> downloads/README.md
+          echo "\`\`\`" >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "## نکته" >> downloads/README.md
+          echo "اگر فایل با رمز محافظت شده، هنگام باز کردن رمز را وارد کنید." >> downloads/README.md
+          
+          echo "✅ دانلود و تقسیم فایل‌ها با موفقیت انجام شد"
+          
+      - name: آپلود به مخزن
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add downloads/ -f
+          git commit -m "دانلود خودکار توسط GitHub Actions" || echo "تغییری وجود ندارد"
+          git push
