@@ -1,0 +1,51 @@
+name: 'File Downloader & Splitter'
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'لینک مستقیم فایل'
+        required: true
+        type: string
+      split_size:
+        description: 'حداکثر حجم هر قسمت (MB)'
+        required: true
+        default: '90'
+        type: string
+
+jobs:
+  download-and-split:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: دریافت کدهای مخزن
+        uses: actions/checkout@v4
+
+      - name: پاکسازی فایل‌های قبلی (اختیاری)
+        run: |
+          rm -rf downloads
+          mkdir -p downloads
+
+      - name: دانلود فایل
+        run: |
+          echo "در حال دانلود از: ${{ github.event.inputs.url }}"
+          curl -L --retry 3 --retry-delay 2 -o "downloads/temp_file" "${{ github.event.inputs.url }}"
+
+      - name: تقسیم فایل به قطعات
+        run: |
+          cd downloads
+          SPLIT_SIZE_MB=${{ github.event.inputs.split_size }}
+          SPLIT_SIZE_KB=$((SPLIT_SIZE_MB * 1024))
+          split -b ${SPLIT_SIZE_KB}k temp_file "part_"
+          rm temp_file
+          ls -la
+
+      - name: بازگشت به شاخه اصلی و commit فایل‌ها
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add downloads/ -f
+          git commit -m "Add split file parts [skip ci]" || echo "No changes to commit"
+          git push
