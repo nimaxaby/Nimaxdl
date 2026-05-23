@@ -49,27 +49,26 @@ jobs:
           SPLIT_SIZE="${{ github.event.inputs.split_size }}"
           PASSWORD="${{ github.event.inputs.password }}"
           
-          WORDS=("alpha" "beta" "gamma" "delta" "epsilon" "zeta" "eta" "theta" "iota" "kappa" "lambda" "mu" "nu" "xi" "omicron" "pi" "rho" "sigma" "tau" "upsilon" "phi" "chi" "psi" "omega")
-          
+          # تابع تولید نام یکتا بدون استفاده از آرایه (با seq و shuf)
           get_unique_folder() {
             local NAME="$1"
             if [ ! -d "downloads/$NAME" ]; then
               echo "$NAME"
               return
             fi
-            local RANDOM_WORD=${WORDS[$RANDOM % ${#WORDS[@]}]}
-            local RANDOM_NUM=$((RANDOM % 1000))
-            echo "${NAME}_${RANDOM_WORD}${RANDOM_NUM}"
+            local RANDOM_SUFFIX=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)
+            echo "${NAME}_${RANDOM_SUFFIX}"
           }
           
           mkdir -p downloads_temp downloads
           
+          # دانلود همه لینک‌ها
           for URL in ${{ github.event.inputs.urls }}; do
             FILENAME=$(basename "$URL" | sed 's/[?#].*//' | sed 's/[^a-zA-Z0-9._-]/_/g')
             echo "📥 دانلود: $URL"
             
-            aria2c -x 4 -s 4 -k 1M --max-tries=5 --retry-wait=5 -d downloads_temp -o "$FILENAME" "$URL" 2>/dev/null || \
-            curl -L --retry 5 --retry-delay 5 -o "downloads_temp/$FILENAME" "$URL"
+            aria2c -x 4 -s 4 -k 1M --max-tries=3 --retry-wait=5 -d downloads_temp -o "$FILENAME" "$URL" 2>/dev/null || \
+            curl -L --retry 3 --retry-delay 5 -o "downloads_temp/$FILENAME" "$URL"
             
             if [ ! -s "downloads_temp/$FILENAME" ]; then
               echo "❌ خطا در دانلود: $FILENAME"
@@ -77,6 +76,7 @@ jobs:
             fi
           done
           
+          # حالت ZIP: همه فایل‌ها در یک بسته
           if [ "$MODE" = "zip" ]; then
             if [ -n "$(ls -A downloads_temp 2>/dev/null)" ]; then
               ARCHIVE_NAME="archive_$(date +%Y%m%d_%H%M%S)"
@@ -90,13 +90,14 @@ jobs:
               fi
               
               cd "downloads/$FOLDER_NAME"
-              echo "نام قطعه,لینک دانلود مستقیم" > links.csv
+              echo "نام قطعه,لینک دانلود (کلیک کنید و View Raw بزنید)" > links.csv
               ls -1 | grep -E "\.(zip|z[0-9]+)$" | while read PART; do
-                echo "$PART,https://github.com/${{ github.repository }}/blob/main/downloads/$FOLDER_NAME/$PART?raw=true" >> links.csv
+                echo "$PART,https://github.com/${{ github.repository }}/blob/main/downloads/$FOLDER_NAME/$PART" >> links.csv
               done
               cd ../..
             fi
           else
+            # حالت normal: هر فایل جداگانه
             for FILE in downloads_temp/*; do
               [ -f "$FILE" ] || continue
               [ -s "$FILE" ] || continue
@@ -122,9 +123,9 @@ jobs:
               fi
               
               cd "downloads/$FOLDER_NAME"
-              echo "نام قطعه,لینک دانلود مستقیم" > links.csv
+              echo "نام قطعه,لینک دانلود (کلیک کنید و View Raw بزنید)" > links.csv
               ls -1 | grep -E "\.(zip|z[0-9]+)$" | while read PART; do
-                echo "$PART,https://github.com/${{ github.repository }}/blob/main/downloads/$FOLDER_NAME/$PART?raw=true" >> links.csv
+                echo "$PART,https://github.com/${{ github.repository }}/blob/main/downloads/$FOLDER_NAME/$PART" >> links.csv
               done
               cd ../..
             done
@@ -132,37 +133,26 @@ jobs:
           
           rm -rf downloads_temp
           
-          echo "# فایل‌های دانلود شده" > downloads/README.md
-          echo "" >> downloads/README.md
-          echo "## نحوه دانلود قطعات" >> downloads/README.md
-          echo "1. وارد پوشه هر فایل شوید" >> downloads/README.md
-          echo "2. فایل \`links.csv\` را باز کنید" >> downloads/README.md
-          echo "3. روی لینک هر قطعه کلیک کنید" >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "## نحوه چسباندن قطعات" >> downloads/README.md
-          echo "فایل‌های \`.z01\`, \`.z02\`, \`.zip\` توسط نرم‌افزارهای معمولی قابل باز شدن هستند." >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "### در ویندوز:" >> downloads/README.md
-          echo "- روی فایل \`.zip\` کلیک راست کنید" >> downloads/README.md
-          echo "- گزینه **Extract Here** را انتخاب کنید" >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "### در اندروید:" >> downloads/README.md
-          echo "- با **ZArchiver** یا **RAR** مستقیماً فایل \`.zip\` را باز کنید" >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "### در لینوکس/مک:" >> downloads/README.md
-          echo "\`\`\`bash" >> downloads/README.md
-          echo "unzip file.zip" >> downloads/README.md
-          echo "\`\`\`" >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "## نکته" >> downloads/README.md
-          echo "اگر فایل با رمز محافظت شده، هنگام باز کردن رمز را وارد کنید." >> downloads/README.md
-          
-          echo "✅ دانلود و تقسیم فایل‌ها با موفقیت انجام شد"
-          
-      - name: آپلود به مخزن
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add downloads/ -f
-          git commit -m "دانلود خودکار توسط GitHub Actions" || echo "تغییری وجود ندارد"
-          git push
+          # ساخت README راهنما
+          cat > downloads/README.md << 'EOF'
+# فایل‌های دانلود شده
+
+## نحوه دانلود قطعات
+1. وارد پوشه هر فایل شوید
+2. فایل `links.csv` را باز کنید
+3. روی لینک هر قطعه کلیک کنید
+4. در صفحه باز شده، دکمه **`View Raw`** را بزنید تا دانلود شروع شود
+
+## نحوه چسباندن قطعات
+فایل‌های `.z01`, `.z02`, `.zip` توسط نرم‌افزارهای معمولی قابل باز شدن هستند.
+
+### در ویندوز:
+- روی فایل `.zip` کلیک راست کنید
+- گزینه **Extract Here** را انتخاب کنید
+
+### در اندروید:
+- با **ZArchiver** یا **RAR** مستقیماً فایل `.zip` را باز کنید
+
+### در لینوکس/مک:
+```bash
+unzip file.zip
