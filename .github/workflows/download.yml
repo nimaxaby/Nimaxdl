@@ -1,4 +1,4 @@
-name: 'UDL-Style Downloader (Simple)'
+name: 'UDL-Style Downloader (Stable)'
 
 on:
   workflow_dispatch:
@@ -51,19 +51,20 @@ jobs:
           
           mkdir -p downloads_temp downloads
           
-          # دانلود
-          for URL in ${{ github.event.inputs.urls }}; do
+          # حلقه دانلود با استفاده از آرایه (سازگار با Bash)
+          urls_array=(${{ github.event.inputs.urls }})
+          for URL in "${urls_array[@]}"; do
             FILENAME=$(basename "$URL" | sed 's/[?#].*//' | sed 's/[^a-zA-Z0-9._-]/_/g')
-            echo "📥 $URL"
+            echo "📥 دانلود: $URL"
             aria2c -x 4 -s 4 -k 1M --max-tries=3 --retry-wait=5 -d downloads_temp -o "$FILENAME" "$URL" 2>/dev/null || \
             curl -L --retry 3 --retry-delay 5 -o "downloads_temp/$FILENAME" "$URL"
             if [ ! -s "downloads_temp/$FILENAME" ]; then
-              echo "❌ Failed: $FILENAME"
+              echo "❌ خطا در دانلود: $FILENAME"
               rm -f "downloads_temp/$FILENAME"
             fi
           done
           
-          # تابع ساده برای نام یکتا (بدون local و بدون /dev/urandom)
+          # تابع ساده برای نام یکتا
           unique_folder() {
             NAME=$1
             if [ ! -d "downloads/$NAME" ]; then
@@ -127,16 +128,39 @@ jobs:
           
           rm -rf downloads_temp
           
-          echo "# فایل‌ها" > downloads/README.md
-          echo "برای دانلود: روی لینک کلیک کن، سپس **View Raw** بزن." >> downloads/README.md
-          echo "برای چسباندن قطعات: در ویندوز راست کلیک → Extract Here، در اندروید با ZArchiver." >> downloads/README.md
+          # ساخت فایل README
+          echo "# فایل‌های دانلود شده" > downloads/README.md
+          echo "" >> downloads/README.md
+          echo "## نحوه دانلود قطعات" >> downloads/README.md
+          echo "1. وارد پوشه هر فایل شوید" >> downloads/README.md
+          echo "2. فایل \`links.csv\` را باز کنید" >> downloads/README.md
+          echo "3. روی لینک هر قطعه کلیک کنید" >> downloads/README.md
+          echo "4. در صفحه باز شده، دکمه **\`View Raw\`** را بزنید تا دانلود شروع شود" >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "## نحوه چسباندن قطعات" >> downloads/README.md
+          echo "فایل‌های \`.z01\`, \`.z02\`, \`.zip\` توسط نرم‌افزارهای معمولی قابل باز شدن هستند." >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "### در ویندوز:" >> downloads/README.md
+          echo "- روی فایل \`.zip\` کلیک راست کنید" >> downloads/README.md
+          echo "- گزینه **Extract Here** را انتخاب کنید" >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "### در اندروید:" >> downloads/README.md
+          echo "- با **ZArchiver** یا **RAR** مستقیماً فایل \`.zip\` را باز کنید" >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "### در لینوکس/مک:" >> downloads/README.md
+          echo "\`\`\`bash" >> downloads/README.md
+          echo "unzip file.zip" >> downloads/README.md
+          echo "\`\`\`" >> downloads/README.md
+          echo "" >> downloads/README.md
+          echo "## نکته" >> downloads/README.md
+          echo "اگر فایل با رمز محافظت شده، هنگام باز کردن رمز را وارد کنید." >> downloads/README.md
           
-          echo "✅ انجام شد"
+          echo "✅ دانلود و تقسیم فایل‌ها با موفقیت انجام شد"
           
       - name: آپلود به مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add downloads/ -f
-          git commit -m "دانلود جدید" || echo "بدون تغییر"
+          git commit -m "دانلود خودکار توسط GitHub Actions" || echo "تغییری وجود ندارد"
           git push
