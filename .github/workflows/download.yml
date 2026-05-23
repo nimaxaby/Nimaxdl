@@ -1,28 +1,16 @@
-name: 'UDL-Style Downloader (Stable)'
+name: 'Simple Downloader'
 
 on:
   workflow_dispatch:
     inputs:
-      urls:
-        description: 'لینک مستقیم (برای چند لینک با فاصله جدا کنید)'
+      url:
+        description: 'لینک مستقیم فایل'
         required: true
         type: string
-      mode:
-        description: 'حالت بسته‌بندی'
-        required: false
-        default: 'normal'
-        type: choice
-        options:
-        - normal
-        - zip
       split_size:
         description: 'حداکثر حجم هر قسمت (MB)'
         required: false
         default: '95'
-        type: string
-      password:
-        description: 'رمز فایل زیپ (اختیاری)'
-        required: false
         type: string
 
 jobs:
@@ -30,137 +18,54 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    timeout-minutes: 120
-    
     steps:
-      - name: دریافت کد مخزن
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: نصب ابزارها
+
+      - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y aria2 zip curl bc
-          
-      - name: دانلود و تقسیم
+          sudo apt-get install -y zip curl
+
+      - name: Download file
         run: |
-          MODE="${{ github.event.inputs.mode }}"
+          mkdir -p downloads_temp
+          cd downloads_temp
+          curl -L -o file "${{ github.event.inputs.url }}"
+          echo "Download completed"
+          ls -la
+
+      - name: Split file into parts
+        run: |
           SPLIT_SIZE="${{ github.event.inputs.split_size }}"
-          PASSWORD="${{ github.event.inputs.password }}"
-          
-          mkdir -p downloads_temp downloads
-          
-          # حلقه دانلود با استفاده از آرایه (سازگار با Bash)
-          urls_array=(${{ github.event.inputs.urls }})
-          for URL in "${urls_array[@]}"; do
-            FILENAME=$(basename "$URL" | sed 's/[?#].*//' | sed 's/[^a-zA-Z0-9._-]/_/g')
-            echo "📥 دانلود: $URL"
-            aria2c -x 4 -s 4 -k 1M --max-tries=3 --retry-wait=5 -d downloads_temp -o "$FILENAME" "$URL" 2>/dev/null || \
-            curl -L --retry 3 --retry-delay 5 -o "downloads_temp/$FILENAME" "$URL"
-            if [ ! -s "downloads_temp/$FILENAME" ]; then
-              echo "❌ خطا در دانلود: $FILENAME"
-              rm -f "downloads_temp/$FILENAME"
-            fi
-          done
-          
-          # تابع ساده برای نام یکتا
-          unique_folder() {
-            NAME=$1
-            if [ ! -d "downloads/$NAME" ]; then
-              echo "$NAME"
-              return
-            fi
-            RAND_SUFFIX=$RANDOM
-            while [ -d "downloads/${NAME}_${RAND_SUFFIX}" ]; do
-              RAND_SUFFIX=$RANDOM
-            done
-            echo "${NAME}_${RAND_SUFFIX}"
-          }
-          
-          if [ "$MODE" = "zip" ]; then
-            if [ -n "$(ls -A downloads_temp 2>/dev/null)" ]; then
-              ARCHIVE_NAME="archive_$(date +%Y%m%d_%H%M%S)"
-              FOLDER_NAME=$(unique_folder "$ARCHIVE_NAME")
-              mkdir -p "downloads/$FOLDER_NAME"
-              if [ -n "$PASSWORD" ]; then
-                zip -j -P "$PASSWORD" -s ${SPLIT_SIZE}m "downloads/$FOLDER_NAME/${ARCHIVE_NAME}.zip" downloads_temp/*
-              else
-                zip -j -s ${SPLIT_SIZE}m "downloads/$FOLDER_NAME/${ARCHIVE_NAME}.zip" downloads_temp/*
-              fi
-              cd "downloads/$FOLDER_NAME"
-              echo "نام قطعه,لینک دانلود (View Raw)" > links.csv
-              for PART in $(ls -1 *.zip *.z[0-9]* 2>/dev/null); do
-                echo "$PART,https://github.com/${{ github.repository }}/blob/main/downloads/$FOLDER_NAME/$PART" >> links.csv
-              done
-              cd ../..
-            fi
-          else
-            for FILE in downloads_temp/*; do
-              [ -f "$FILE" ] || continue
-              [ -s "$FILE" ] || continue
-              BASENAME=$(basename "$FILE")
-              NAME="${BASENAME%.*}"
-              FOLDER_NAME=$(unique_folder "$NAME")
-              mkdir -p "downloads/$FOLDER_NAME"
-              SIZE=$(stat -c%s "$FILE")
-              if [ "$SIZE" -gt $((SPLIT_SIZE * 1024 * 1024)) ]; then
-                if [ -n "$PASSWORD" ]; then
-                  zip -j -P "$PASSWORD" -s ${SPLIT_SIZE}m "downloads/$FOLDER_NAME/${NAME}.zip" "$FILE"
-                else
-                  zip -j -s ${SPLIT_SIZE}m "downloads/$FOLDER_NAME/${NAME}.zip" "$FILE"
-                fi
-              else
-                if [ -n "$PASSWORD" ]; then
-                  zip -j -P "$PASSWORD" "downloads/$FOLDER_NAME/${NAME}.zip" "$FILE"
-                else
-                  zip -j "downloads/$FOLDER_NAME/${NAME}.zip" "$FILE"
-                fi
-              fi
-              cd "downloads/$FOLDER_NAME"
-              echo "نام قطعه,لینک دانلود (View Raw)" > links.csv
-              for PART in $(ls -1 *.zip *.z[0-9]* 2>/dev/null); do
-                echo "$PART,https://github.com/${{ github.repository }}/blob/main/downloads/$FOLDER_NAME/$PART" >> links.csv
-              done
-              cd ../..
-            done
-          fi
-          
+          mkdir -p downloads
+          cd downloads_temp
+          # Get filename without extension
+          BASENAME=$(basename "${{ github.event.inputs.url }}" | sed 's/[?#].*//')
+          NAME="${BASENAME%.*}"
+          mkdir -p "../downloads/$NAME"
+          zip -s ${SPLIT_SIZE}m "../downloads/$NAME/${NAME}.zip" file
+          cd ..
           rm -rf downloads_temp
-          
-          # ساخت فایل README
-          echo "# فایل‌های دانلود شده" > downloads/README.md
-          echo "" >> downloads/README.md
-          echo "## نحوه دانلود قطعات" >> downloads/README.md
-          echo "1. وارد پوشه هر فایل شوید" >> downloads/README.md
-          echo "2. فایل \`links.csv\` را باز کنید" >> downloads/README.md
-          echo "3. روی لینک هر قطعه کلیک کنید" >> downloads/README.md
-          echo "4. در صفحه باز شده، دکمه **\`View Raw\`** را بزنید تا دانلود شروع شود" >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "## نحوه چسباندن قطعات" >> downloads/README.md
-          echo "فایل‌های \`.z01\`, \`.z02\`, \`.zip\` توسط نرم‌افزارهای معمولی قابل باز شدن هستند." >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "### در ویندوز:" >> downloads/README.md
-          echo "- روی فایل \`.zip\` کلیک راست کنید" >> downloads/README.md
-          echo "- گزینه **Extract Here** را انتخاب کنید" >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "### در اندروید:" >> downloads/README.md
-          echo "- با **ZArchiver** یا **RAR** مستقیماً فایل \`.zip\` را باز کنید" >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "### در لینوکس/مک:" >> downloads/README.md
-          echo "\`\`\`bash" >> downloads/README.md
-          echo "unzip file.zip" >> downloads/README.md
-          echo "\`\`\`" >> downloads/README.md
-          echo "" >> downloads/README.md
-          echo "## نکته" >> downloads/README.md
-          echo "اگر فایل با رمز محافظت شده، هنگام باز کردن رمز را وارد کنید." >> downloads/README.md
-          
-          echo "✅ دانلود و تقسیم فایل‌ها با موفقیت انجام شد"
-          
-      - name: آپلود به مخزن
+
+      - name: Create links.csv
+        run: |
+          cd downloads
+          for dir in */; do
+            cd "$dir"
+            echo "نام قطعه,لینک (کلیک و View Raw)" > links.csv
+            for part in *.zip *.z[0-9]*; do
+              if [ -f "$part" ]; then
+                echo "$part,https://github.com/${{ github.repository }}/blob/main/downloads/$dir$part" >> links.csv
+              fi
+            done
+            cd ..
+          done
+
+      - name: Push to repository
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add downloads/ -f
-          git commit -m "دانلود خودکار توسط GitHub Actions" || echo "تغییری وجود ندارد"
+          git add downloads/
+          git commit -m "Add downloaded file" || echo "No changes"
           git push
